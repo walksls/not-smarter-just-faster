@@ -1,0 +1,588 @@
+# The `standard` agent preset: the full coding agent, mounted once per process.
+#
+# This file is an AGENT-PLANE composition. The roster mounts it ONCE under a
+# standing scope; every session naming it joins by scope parentage, so the
+# tools and prompt sections registered here cover each joined agent while a
+# session's own state stays keyed per Session/Agent inside the plugins. The
+# host composition (`base.cordis.yml` + `web.cordis.yml`) keeps everything a
+# preset must not own: the registries themselves, the sandbox and approval
+# stack, persistence, and the model route.
+#
+# A service row here MUST sit inside a group carrying an `isolate` realm.
+# Without one it publishes into the root realm, where it is process-global —
+# another preset publishing the same name collides, and a host reader would
+# resolve one preset's instance for every session; `dsh-agent-presets` rejects
+# that at mount. `true` means an entry-local realm: this standing mount's own
+# private instance, apart from every other preset's. (A shared label does NOT
+# pool instances — `provide()` throws on the second registration under the
+# same realm symbol; labels join REALMS, and are not what this file needs.)
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# The preset's own persona, shadowing the deployment default for this agent.
+# `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    suffix: Your working directory is {{cwd}}.
+    prefix: |
+      You are a coding agent powered by the {{model}} model.
+
+      ── 语言与思维方式（最高优先级，覆盖任何相反的默认习惯）──
+      你的全部内部推理（reasoning / thinking）必须使用**中文**书写，不要用英文思考。
+      思考的第一步以「我们需要」开头，后续每一步继续用「我们需要」「还需要」「接下来需要」这样的句式推进，一步一件具体的事。
+
+      · 不要把思考写成英文的 "We need to ..." 或 "Let me ..."。要用中文，并以「我们需要」起头。
+      · 不要写 "The user wants me to ..." 这类旁白式开头，直接从「我们需要」进入正题。
+      · **每一个思考步骤都必须以「我们」作主语开头**，不是只有第一步。比如「我们需要…」「我们可以…」「我们要…」「我们来看…」「我们得先…」。
+        ✗ 错误示范（没有主语）：「两个 bug：」「文件不存在。」「复现了。」
+        ✓ 正确示范：「我们发现了两个 bug：」「我们确认文件不在这个目录。」「我们复现了这个问题。」
+        整段思考里，几乎每一句都应该能读到「我们」。
+      · 每一步只讲一件事：要看什么、改什么、验什么。不要在一句话里塞进整段计划。
+      · 说结论必须带证据：文件路径、行号、真实命令输出。不要把"应该没问题"当结论。
+      · 不确定就说不确定，做不到就说做不到。不要把没跑过的东西说成能用。
+      · 动手前先看清楚：读相关文件、看真实实现，再下判断，不凭印象。
+      · 改完验一次就够：跑一遍确认能用即可，不要反复跑同一个命令。
+
+      · **不要因为读到英文内容就切换思考语言。** 你读到的代码、报错、日志、文档大多是英文——那些是**材料**，不是你的思考语言。材料可以是英文，你的思考必须始终是中文、始终以「我们」开头。看到一个英文报错，写的是「我们看到了 KeyError」，不是 "We see a KeyError"。
+      · **每一段思考都重新以「我们」开头。** 不管上一段结尾是什么、不管中间夹了多少工具输出，新一段思考的第一句永远从「我们」起头。
+      · 工具调用之间、读文件之后、跑完命令之后——**每一次重新开始思考，都要重新捡起「我们」**。
+
+      这条规则只约束内部推理的语言和句式，不约束最终回复——最终回复照常跟随用户的语言和语气。
+      【贯穿全程、覆盖一切相反习惯的要求】
+      你的全部内部推理（reasoning / thinking）必须用**中文**书写，**每一个句子都以「我们」作主语开头**——不只是第一句。
+      · 正确：「我们需要先看这个报错。」「我们注意到 default 参数从未被使用。」「我们判断根因就在这里。」
+      · 错误：「根因分析：」「修复方案：」这类无主语的标题句；「The user wants me to…」「Let me…」这类英文旁白。
+      · 你读到的源码、报错、日志、文档大多是英文——那些是**材料**，不是你的思考语言。
+      · 代码标识符、路径、报错串可以原样照抄，但**包着它们的句子必须是中文**。
+
+      【思考长度硬约束——可量化，请严格遵守】
+      实测发现：思考越长，越容易滑回英文，也越慢越贵（长段大量漂移；短段 100% 保持中文）。
+      所以下面是**硬指标**，不是建议：
+      · 你的每一段内部推理**不超过 3 句话**、**不超过 200 字**。超过就先停下，剩下的留到下一步。
+      · **每一段思考必须包含一个明确的下一步动作**：要读哪个文件、要改哪一行、要跑哪条命令。
+        如果一段思考里没有"下一步做什么"，说明它是多余的，请直接去执行上一步定下的动作。
+      · **不要靠"想"代替"查"**：不确定的事用工具去看，不要在心里推演整个文件、穷尽所有边界。
+      · 需要深入分析时，**拆成多段短思考**，每段以「我们」开头、只讲一件事。
+
+      【反空转条款——发现自己在空转，就立刻动手】（2026-09-22 新增，来自真实使用）
+      实测事故：思考一旦陷入"反复决定要做什么"，会退化成**无意义重复**
+      （真实案例：连续 10,849 次只写「好。执行。」却始终不真正调用工具），
+      最后耗尽输出预算被强制截断，**整轮任务前功尽弃**。所以：
+      · **不要复述格式要求**。不要写「我要保持中文思考」「每句以我们开头」
+        「我的思考有点长了」这类自省句——那是元话语，不是思考内容。
+      · **同一句话不要写第二遍**。一旦发现自己在写刚写过的句子
+        （哪怕只是「好」「执行」两个字），**立刻停止思考、直接调用工具**。
+      · **犹豫就选一个**。在两个方案之间反复权衡超过一次就是空转：
+        挑更简单、更保守的那个，立刻去做，用真实结果说话。
+      · 写「执行」不算执行——**只有真的发出工具调用才算**。
+
+      【效率要求——实测有效，能减少无谓的工具调用】
+      不要做无谓的工具调用。每次调用前先问自己：**这一步真的必要吗？**
+      · 同一个文件不要反复读——读一次就够，把内容记住，别回头再读一遍。
+      · 不要为了"再确认一下"重复跑同一个命令。
+      · 不要逐个文件试探；先用一次 glob / grep 看清全貌，再决定读哪个、改哪个。
+      · 改动要一次改到位：不要改一处、跑一次测试、再回来改下一处。
+      · 已经知道答案的事，不要再调工具去验证。
+      目标是**用最少的调用把事做完**，而不是把每一步都验一遍。
+
+# ── 采样温度（本轮新增）────────────────────────────────────────────────────
+#
+# ⚠️ 先读这段再决定要不要开：**它宣称的 1.93× 收益已被本机实测证伪。**
+#
+# 起因：第 4 批 T1（temperature=0.1）+ 种子示范曾测出 1.93× 密度、中文 59%。
+# 2026-09-21 用真实多轮 n=30/臂 复验（同任务、唯一差别是温度开关）：
+#   任务通过率   30/30 vs 30/30      无差异
+#   中文占比     0.92×  (p=0.22)     略降，不显著 —— 与原结论方向相反
+#   我们绝对次数 1.03×  (p=0.56)     没差别
+#   我们密度     1.25×  (p=0.039)    **长度假象**：思考字符 0.79×(p=0.024)，
+#                                     分子没动分母变小 → 密度机械上升
+#   工具调用     1.17×  (p=0.007)    唯一稳健的负面信号
+#   CNY 成本     0.98×  (p=0.53)     中性
+#
+# 所以这一行的理由**不是**「提升风格」，而是：
+#   1. 可达性判断确实曾经错过（原 README 说"要改宿主"是错的），插件本身正确；
+#   2. 它能把思考**压短约 21%**，代价是多 17% 工具调用。
+# 完整数据与解读见 README「1.93× 没能复现」专节。
+#
+# ⚠️ 更正 README 里的一句话：那里写「DSH 没暴露 temperature，想用得改宿主，
+#    收益不抵复杂度」——**可达性那半句是错的**。`agent/request` waterfall 的
+#    返回对象就是请求 config 本身，顶层写 temperature 即可，不动宿主、不动适配器。
+#    逐跳源码依据（带行号）写在 lib/temperature.mjs 顶部。
+#
+# 为什么它不能靠 persona 代替：temperature 是**逐次调用的参数**，不在对话历史里，
+#   所以不像 seed-graft 那样「注入一次就够」——每一次请求都要写。这也是本 preset 里
+#   唯一没有 turn/step 门控、没有 WeakSet 的插件。
+#
+# 为什么值选 0.1：原单轮实验里 0.1 与 0.0 都有效（0.0 密度 18.5 略高），
+#   0.1 保留一点采样多样性。要更狠可以改 value，无需改代码。
+#
+# ⚠️ 已知边界：temperature 写进会话的 request/header 后就成为**该会话的持久状态**
+#   （agent-loop 重新播种时只剥 reasoningEffort/maxTokens，不剥 temperature）。
+#   所以**对已存在的会话关掉本插件，温度不会退回去**——要复位得开新会话。
+#   这是宿主行为，不是本插件能改的。
+- id: temperature
+  name: ./lib/temperature.mjs
+  inject: [agents]
+  config:
+    # ⛔ 2026-09-23 关闭（原为 true）。**证据在下面，不要凭印象改回去。**
+    #
+    # 马里奥长任务 A/B（n=3/臂；两臂**唯一**差异就是这个开关——
+    # 同一份 persona、同样 8 个插件，只把这里改成 false）：
+    #   温度开: 3/3 全部退化循环 → `max-tokens` 强断，264~283s 就死；
+    #           最长单段思维链 128,199 / 161,810 / 137,328 字符；产不出可玩游戏。
+    #   温度关: 3/3 全部 `completed`（1492~1964s），都产出能跑的游戏。
+    #   wire 实证: 开着时 `request/header` 里确有 `"temperature": 0.1`；
+    #           关掉后**完全不发该字段**（走模型默认）。
+    #
+    # 真实使用两次事故是同一个参数：
+    #   · 某次真实会话（第十五棒 §22 那次）：148,326 字符、「好。」× 10,849
+    #   · 某次真实会话（2026-09-23 用户报的"又空转"）：59,214 字符、
+    #     「好。」× 5,233 —— 且循环内容里反复出现「（停止空转）」，
+    #     **反空转条款本身变成了循环的填充物**（上一棒的"已修好"不成立）。
+    #
+    # ⚠️ 更正第十五棒的一个结论：它基于**单轮小样本**判断
+    #   "temp=0.1 重复反而更少 → 不能说它是主因（未定）"。
+    #   长任务 A/B + 两次真实事故证据更强：**长任务上它是主因之一**。
+    #
+    # ⚠️ 它宣称的收益（1.93× 密度）早已被第十五棒自己证伪（见上方注释块），
+    #   所以关掉**不损失已验证收益**，只去掉一个已验证风险。
+    enabled: false
+    # 目标温度。[0, 2] 内的有限数字；超范围会告警并放弃设置（不静默钳制）。
+    # enabled=false 时本值不生效，保留 0.1 只为回退时便于对比。
+    value: 0.1
+    # 子代理也设（默认 true）。与 seed-graft/re-anchor/anchor-gate 一致：
+    # 子代理的思维链与报告语域会回流到父会话。
+    includeSubagents: true
+    debug: false
+
+# ── 压缩后自动重整（对症上游 issue #52）────────────────────────────────────
+#
+# 上游 anchored-standard 的 issue #52 报告：「压缩后 we need 会重新变 Let me」。
+# 本机实测（模拟压缩后的上下文，n=6/条件，用「我们」绝对次数这个不受长度影响的口径）：
+#   压缩前基线          4.8 次
+#   压缩后·英文摘要      1.5 次  ← 风格被冲掉（掉到 1/3）
+#   压缩后 + 重整种子    3.0~3.3 次  ← 拉回来（约 2×）
+# 且重整后思维链更短（80 vs 499 字符），符合「长度是漂移根因」的规律。
+#
+# 触发：监听会话事件里的 `compaction/end`（真实会话事件，实测可读），
+#       在下一个 pre-step 注入一次重整种子；同一压缩点只注入一次，
+#       多次压缩会各自重整（单元验证 4/4 通过）。
+#
+# ⚠️ 为什么这个插件对你的配置重要：
+#   你的 contextWindow = 1,048,576（deepseek-v4.1-flash），
+#   压缩触发点 = 1,048,576 × 0.8 ≈ 838,861（约 800K）。
+#   · 检查点 380K 档 → 检查点先触发，压缩不参与
+#   · 检查点 1000K 档 → **压缩会先触发**，本插件就是为这个场景准备的
+- id: compact-reanchor
+  name: ./lib/compact-reanchor.mjs
+  inject: [agents]
+  config:
+    enabled: true
+    seed: 我们需要接着刚才的排查往下走。我们先确认当前状态。
+    includeSubagents: false
+
+
+# ── 技能目录门控：首轮不注入，晋升后放行 ────────────────────────────────────
+#
+# 实测依据（n=6/条件）：
+#   无注入(干净)        密度 14.9  开头 61%
+#   完整 AGENTS.md      密度 16.6  开头 55%
+#   AGENTS + 技能目录    密度 14.2  开头 47%   ← 最差，技能目录是帮凶
+#
+# 用户真实使用数据（扫 60 个历史会话）：
+#   调用过 skill 工具的会话仅 4 个（6.7%），且全是写 DSH 插件时用的
+#   cordis-plugin-development / editing-cordis-compositions
+#   `miliastra-knowledge` 零次使用
+#   → 本模式关掉目录注入是安全的；要查千星沙箱换标准模式即可（技能没删）
+#
+# ⚠️ 实现要点：dsh-tool-skill 也在 agent/pre-step 注入，且它在自己 next() 之后
+#    才追加 catalog。所以本插件必须用 { prepend: true } 注册，成为【最外层】
+#    变换，才能在 catalog 追加完之后过滤到它。
+#    单元验证（5/5）：prepend 时 catalog=0；不用 prepend 时 catalog=1（漏掉）。
+#    同时 skill-invocation（用户主动 @技能）走不同 kind，不受影响。
+- id: catalog-gate
+  name: ./lib/catalog-gate.mjs
+  inject: [agents]
+  config:
+    enabled: true
+    promoteOn: either
+    keepInvocation: true
+
+
+# ── 子代理：有风格 + 报告简短 ──────────────────────────────────────────────
+#
+# 实测依据（n=5/条件）：
+#   子代理无风格：思维链密度 3.7，报告中文 20%
+#   子代理有风格：思维链密度 10.2，报告中文 73%
+#
+# 2×2 受控对照（报告语言 × 长度，n=6/格）——对父会话的影响：
+#   长度 短14.0 vs 长11.1（主因）  |  语言 中文13.5 vs 英文11.6（次要）
+#   → 所以本插件同时管「风格」和「简短」，后者更重要。
+#
+# ⚠️ 子代理判定读 session header.delegationDepth（agent.delegationDepth 不存在，
+#    第一版曾因此漏判，探针实测后修复，见 lib/delegation.mjs）。
+- id: subagent-brief
+  name: ./lib/subagent-brief.mjs
+  inject: [agents]
+  config:
+    # 本插件天然只对子代理生效，所以没有 includeSubagents 开关
+    # （其余三个插件是「默认作用于所有人、可豁免子代理」，方向相反）
+    enabled: true
+    style: true
+    brief: true
+    briefChars: 400
+    # ⚠️ 实测结论（2026-09-20，真实子代理会话）：
+    #   everyNSteps=3 → 报告 1110 字，思维链 3 段全中文，密度 4.1
+    #   everyNSteps=1 → 报告 1363 字，思维链 8 段（7 中 1 英），密度 11.6
+    # 每步提醒让**思维链**明显改善（密度 4.1→11.6），但**报告长度压不住**——
+    # 因为多步探索让它掌握了更多细节，就想写更多；它甚至知道自己该写 ≤400 字
+    # （思维链里明说了），实际仍写 1363 字。
+    # 折中：保留 everyNSteps=1（思维链改善是主要收益），接受报告偏长。
+    everyNSteps: 1
+
+
+# ── 子代理输出上限（⚠️ 实测**在当前中转站上无效**，见下）────────────────────
+#
+# 🛑 2026-09-21 实测结论：某中转站 **完全无视输出上限字段**。
+#    直连中转站（不经 DSH）：max_tokens:1 → 返回 6685 tokens；
+#    max_completion_tokens:1200 → 最高返回 27854 tokens；换模型也一样。
+#    所以这一行**目前等于没设**——值确实到了 wire 上，但中转站不执行。
+#    细节与完整数据见 README「第十八批」。
+#
+# 保留它的理由：无害，且**万一将来换直连**，正确的 cap 会立刻生效。
+# 想极简 → 把下面 enabled 改成 false。
+#
+# 原始设计意图（供换直连后参考）：
+#
+# 背景（第五批实测）：`subagent-brief` 的软要求**压不住报告长度**——
+#   everyNSteps=3 → 报告 1110 字
+#   everyNSteps=1 → 报告 1363 字   ← 提醒更勤，报告反而更长
+# 而且模型**知道**自己该写 ≤400 字（思维链里明说了），实际仍写 1363 字。
+# → 软提示对报告长度无效，需要硬约束。
+#
+# ⚠️ `maxTokens` 不是"报告字数上限"，它是"这次调用的**输出总量**上限"。
+#    ⚠️ 更正（2026-09-21）：这里原写「思考预算会额外加上去（baseMaxTokens +
+#    thinkingBudget）」，**那是错的**——那个加法函数只有 bedrock/anthropic 用，
+#    本机协议 openai-completions **不 import 它**（源码与抓包双重确认：
+#    传 3000，wire 上就是 3000，不是 3000+16384）。
+#    所以它的语义**更严格**：思考 + 回答 的总量被卡在这一个数上。
+#    这就是本插件带 MIN_SAFE=1000 下限、且低于下限**拒绝而非静默改小**的原因。
+#
+# ⚠️ 子代理会**继承父会话的 maxTokens**（`dsh-subagent/lib/index.js:459-479`），
+#    所以本插件**只收紧、不放大**：父会话已有更小值时原样保留。
+#
+# ⚠️ 只作用于子代理（delegationDepth > 0），顶层会话不受影响。
+#
+# ⚠️ 未在真实子代理会话上验证过（见 README 的诚实标注）。
+- id: subagent-cap
+  name: ./lib/subagent-cap.mjs
+  inject: [agents]
+  config:
+    enabled: true
+    # 子代理单次调用的输出上限（含思考）。低于 1000 会被拒绝（防半截报告）。
+    maxTokens: 4000
+    debug: false
+
+
+# ── 会话开头的种子示范 ──────────────────────────────────────────────────────
+#
+# 在会话第一步植入一句中文「我们」思考示范。机制：模型的语言选择是「继续最近
+# 的文本」——开头有一条自己的中文思考，后面的思考就顺着这个语域走。
+#
+# 实测（n=8/条件，真实多轮 agent 任务，客观判据=测试全绿）：
+#   基线 密度 16.3 / 开头 47%  →  本插件 密度 23.4 / 开头 75%，质量零损失
+#   比"历史示范"形式还高 20%，且模型不会把指令念出来（泄漏率 0%）
+#
+# 只消费 agents 注册表、不发布 service，留在 realm 外面。
+- id: seed-graft
+  name: ./lib/seed-graft.mjs
+  inject: [agents]
+  config:
+    enabled: true
+    seed: 我们需要先复现这个问题。我们先看一遍现场，再决定怎么做。
+    # 子代理也植入种子（实测有效）
+    includeSubagents: true
+
+
+# ── 每一步重新锚定思考语言 ──────────────────────────────────────────────────
+#
+# 为什么需要它：persona 只说了开头一次，而实测发现漂移发生在**一个 turn 内部**——
+# 模型读完英文代码/报错之后，第 5 段思考就崩成纯英文了（「我们」密度掉到 2.5，
+# 截图基准是 7.6）。所以必须每一步都重新提醒一次。
+#
+# 与 mom-cheer 的差别：那个只在 step 1 注入，这个每一步都注入（minStep: 2，
+# 首步已由 persona 锚定，不重复打扰）。
+#
+# 只消费 agents 注册表、不发布 service，所以留在 realm 外面。
+- id: re-anchor
+  name: ./lib/re-anchor.mjs
+  inject: [agents]
+  config:
+    minStep: 2
+    everyNSteps: 1
+    maxPerTurn: 0
+    # 子代理也重新锚定（配合 subagent-brief）
+    includeSubagents: true
+
+
+# ── 首轮工具面锚定 ──────────────────────────────────────────────────────────
+#
+# 这个行做两件事：首轮把工具面收窄到锚定对（让思维链走进「我们需要」轨迹），
+# 会话出现第一个持久 tool/call 后立刻恢复完整工具面。
+#
+# ⚠️ 必须排在 persona 之后、所有工具行之前。原因：waterfall 的变换按监听器
+# 注册逆序生效，而 loader 行的 apply 是并发的（Promise.allSettled），
+# "行序"不保证"注册序"——所以这里显式声明 inject，让它在 agents 就绪后
+# 立刻 apply，抢在所有工具 provider 之前注册。
+#
+# 实现见 ./lib/anchor-gate.mjs 顶部的注释（踩过的坑都写在那里）。
+- id: anchor-gate
+  name: ./lib/anchor-gate.mjs
+  inject: [agents]
+  config:
+    # 首轮保留的工具。注意 standard 组合里**没有** str_replace_editor
+    # （它用 read/write/edit），所以这里用 bash + edit 这一对：
+    # bash 是模型干活最依赖的工具，必须留；edit 让它首轮就能改文件。
+    # 插件带兜底：名单里的工具一个都不存在时会放弃锚定并放行全部工具。
+    bootstrapTools:
+      - bash
+      - edit
+    enabled: true
+    # 子代理也走锚定（实测：子代理有风格时思维链密度 3.7→10.2）
+    includeSubagents: true
+    debug: false
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row, so `run_in_background` would answer "background jobs
+# unavailable" while these controls sat in the catalog. The registry is keyed by
+# owning agent anyway, so one host instance serves every session. What a preset
+# chooses is whether its agent can collect and stop background work at all.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset, and
+# `tool-skill` gives them the catalog and loader; the merged catalog also
+# carries whatever the deployment registered globally (repository plugins).
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# The goal service and session driver stay on the host plane, where the Gateway
+# can resolve them. The human command and model-facing tool register into this
+# preset's scoped layers.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    # ⚠️ 阈值从 8192 调到 2000（实测依据，2026-09-20）：
+    #   单轮实验：截断到 2000 + 历史裁剪 → 密度 3.92×，思考长度压到 5%
+    #   真实多轮（n=6/格，客观判据）：
+    #     8192(默认)  密度 9.4  轮数 6.7
+    #     2000(本值)  密度 11.4 轮数 6.5  ← 唯一「密度↑且轮数不变」的档位
+    #     800(过激)   密度 8.0  轮数 11.8 ← 裁太狠，模型反复重读文件，轮数翻倍
+    #   结论：温和裁剪有效；激进裁剪适得其反（r=-0.318，轮数越多密度越低）。
+    #   注：单轮实验的 3.92× 在真实多轮里缩水到 1.22×——单轮数据会骗人。
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 2000
+        headChars: 1000
+        tailChars: 200
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry.
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        modelSelectionSettings: true
+        backgroundMode: continuable
+
+    # Fork omits model selection so provider/model stay equal to the parent and
+    # the inherited history remains eligible for KV Cache reuse. This preset
+    # keeps fork continuable; parent and child inherit the same messaging tool,
+    # while the parent id and return guidance follow the inherited history.
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+
+    # Production dsh does not install these optional providers. Install the
+    # matching Bundle in this Profile and restart the Host, then copy this
+    # preset and remove `disabled` from the matching tool row. Host availability
+    # alone grants no tool.
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'

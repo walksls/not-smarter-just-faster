@@ -76,7 +76,7 @@ cp -R /tmp/we-need/. ~/.dsh/.agent-presets/we-need/
 | `README-preset.md` | 完整实验日志（20+ 批实验、含被推翻的结论） |
 | `agent.cordis.yml` | preset 定义（persona + 插件装配） |
 | `preset.yml` | 显示名 / 描述 / 排序 |
-| `lib/*.mjs` | 9 个自带插件 |
+| `lib/*.mjs` | 12 个自带插件 |
 | `docs/` | 独立实验的原始报告（见下） |
 
 ### docs/：独立实验
@@ -120,6 +120,8 @@ cp -R /tmp/we-need/. ~/.dsh/.agent-presets/we-need/
 | 每步重新锚定（`re-anchor`） | 压住 step 之间的漂移 |
 | 种子植入（`seed-graft`） | 真实多轮密度 1.52× |
 | 压缩后重整（`compact-reanchor`） | 长会话风格不崩 |
+| 急停阀（`escape-valve`） | 复读正在生成时当场中止本回合，不等下一步 |
+| 折叠退化块（`thinking-guard`） | 把退化的思考块从模型可见历史里折掉，不让它每轮重放 |
 
 ### 被自己推翻的（这些也留在文档里）
 

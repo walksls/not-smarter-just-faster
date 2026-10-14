@@ -34,6 +34,7 @@
  * 用法：
  *   node tools/sync-agent-presets.mjs                 # 写入（先自动备份，幂等）
  *   node tools/sync-agent-presets.mjs --check         # 只检查/预览，不写
+ *   node tools/sync-agent-presets.mjs --force    # 宿主层已挂同名插件时仍然写入（会双实例）
  * 环境变量：DSH_HOME / PRESET_PATCH（默认 web profile）/ PRESET_DEFAULT（默认模式 id）
  */
 
@@ -47,6 +48,7 @@ const PRESET_ROOT = join(HOME, '.agent-presets');
 const PATCH = (process.env.PRESET_PATCH ?? '').trim() || join(HOME, 'profiles', 'web', 'cordis.patch.yml');
 const DEFAULT_PRESET = (process.env.PRESET_DEFAULT ?? 'we-need').trim();
 const CHECK = process.argv.includes('--check');
+const FORCE = process.argv.includes('--force');
 
 const BEGIN = '# ══════════ BEGIN generated agent presets（sync-agent-presets.mjs 生成，勿手改）══════════';
 const END = '# ══════════ END generated agent presets ══════════';
@@ -108,6 +110,38 @@ function rewriteComposition(text, dir, id) {
   if (/new URL\([^)]*baseUrl\)/.test(joined)) problems.push(`${id}: 仍有依赖 baseUrl 的表达式没改写，见上方 grep`);
   if (/^(\s*-?\s*name:\s*)\.\.?\//m.test(joined)) problems.push(`${id}: 仍有相对插件名没改写`);
   return out;
+}
+
+/**
+ * 🛑 宿主层冲突检查（2026-10-15 加）：同一个 `.mjs` 如果已经被 BEGIN/END 之外的行挂载，
+ * preset 段里再启用一份就是**双实例** —— 两个插件各跑一遍（对 thinking-guard 是折叠两次，
+ * 对 escape-valve 是 cancel 两次）。只检测、只报告，不改任何东西。
+ * 判据：路径相同 且 preset 段这条不是显式 `enabled: false`（显式关掉 = 刻意保留的对照组，不算冲突）。
+ */
+function findHostConflicts(block, patchText) {
+  const b = patchText.indexOf(BEGIN);
+  const e = b >= 0 ? patchText.indexOf(END, b) : -1;
+  const outside = b >= 0 && e > b ? patchText.slice(0, b) + patchText.slice(e) : patchText;
+  const hostPaths = new Set(
+    [...outside.matchAll(/^\s*-?\s*name:\s*(\S*\.mjs)\s*$/gm)].map((m) => m[1]),
+  );
+  if (hostPaths.size === 0) return [];
+  const out = [];
+  let cur = null;
+  for (const line of block.split('\n')) {
+    if (/^ {10}- id: \S/.test(line)) {
+      cur = { id: line.trim().replace(/^-\s*id:\s*/, ''), path: undefined, off: false };
+      out.push(cur);
+      continue;
+    }
+    if (cur === null) continue;
+    if (cur.path === undefined) {
+      const nm = /^\s*-?\s*name:\s*(\S*\.mjs)\s*$/.exec(line);
+      if (nm !== null) cur.path = nm[1];
+    }
+    if (/^\s*enabled:\s*false\s*$/.test(line)) cur.off = true;
+  }
+  return out.filter((x) => x.path !== undefined && !x.off && hostPaths.has(x.path));
 }
 
 function buildBlock(entries) {
@@ -184,6 +218,23 @@ if (!existsSync(PATCH)) {
 }
 const before = readFileSync(PATCH, 'utf8');
 const block = buildBlock(entries);
+
+/** 🛑 双实例检查：宿主层（BEGIN/END 之外）已挂的插件，preset 段里不该再启用一份。 */
+const hostConflicts = findHostConflicts(block, before);
+if (hostConflicts.length > 0 && !FORCE) {
+  say('\n🛑 宿主层已经挂了这些插件，preset 段里再启用就成了双实例：');
+  for (const c of hostConflicts) say(`  ✗ ${c.id}  →  ${c.path}`);
+  say('  出路：① 把 preset 源里那条改成 `enabled: false`（宿主层已在生效，不必再挂一份）；');
+  say('        ② 确认你就是要两份，加 `--force` 重跑。');
+  say('  ⚠️ 这份 preset 目录若同时用于发布：别人的机器没有宿主层，需要 enabled: true。');
+  say('     所以别直接改目录里的源文件，改 profile 这一份，或在发布前改回来。');
+  say('  未写入（配置文件一字未动）。');
+  process.exit(4);
+}
+if (hostConflicts.length > 0) {
+  say('\n⚠️ --force：宿主层已挂，仍然写入 ⇒ 会双实例：');
+  for (const c of hostConflicts) say(`  ⚠ ${c.id}  →  ${c.path}`);
+}
 const beginAt = before.indexOf(BEGIN);
 let after;
 if (beginAt >= 0) {

@@ -1,7 +1,8 @@
 # 「我们需要」模式（we-need）：中文思考 + 锚定思维链
 
-> 这是一个 agent preset。放到 `~/.dsh/.agent-presets/we-need/` 下即可，
-> 不需要装 npm 包、不需要改 dsh 源码。
+> 这是一个 agent preset。放到 `~/.dsh/.agent-presets/we-need/` 下之后，
+> 还要跑一次仓库里的 `tools/sync-agent-presets.mjs`（dsh 0.2 不再扫描模式目录），
+> 然后重启 dsh web。不需要装 npm 包、不需要改 dsh 源码。
 
 ## 一句话结论（13 批实验后）
 
@@ -1007,16 +1008,20 @@ persona 是净赚约 14 倍，不是「价格」。
 ## 安装
 
 ```sh
+git clone https://github.com/walksls/not-smarter-just-faster.git /tmp/we-need
 mkdir -p ~/.dsh/.agent-presets
-# 把本仓库目录放成 ~/.dsh/.agent-presets/we-need（目录名必须是 we-need）
-cp -R /path/to/dsh-we-need-preset/. ~/.dsh/.agent-presets/we-need/
+# 把仓库目录放成 ~/.dsh/.agent-presets/we-need（目录名必须是 we-need）
+cp -R /tmp/we-need/. ~/.dsh/.agent-presets/we-need/
+
+# dsh 0.2 换成了声明式注册表，不再扫描模式目录，必须跑这一步
+node ~/.dsh/.agent-presets/we-need/tools/sync-agent-presets.mjs
 ```
 
 > 注意结尾的 `/.`：如果副本目录已存在，写 `cp -R <源> <目标>`（不带 `/.`）
 > 不会覆盖已有文件，还会在目标里造出嵌套目录。已在副本里的话建议用
 > `rsync -a --delete <源>/ ~/.dsh/.agent-presets/we-need/`。
 
-然后完全重启 dsh web（preset 在启动时扫描），新建空白会话，
+然后完全重启 dsh web，新建空白会话，
 在模式选择里选 「我们需要模式」。
 
 > 两条硬性注意：

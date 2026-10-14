@@ -50,19 +50,33 @@
 
 ## 安装
 
+先知道一件事：dsh 0.2 起，模式目录不再被自动扫描。
+旧版的 `@deepseek-ai/dsh-agent-presets` 会扫 `~/.dsh/.agent-presets/<id>/`，
+0.2 换成了声明式注册表，官方 README 的原话是「注册表不扫描目录，也不接受 preset 路径」。
+所以放好目录之后，还要跑一次仓库里的同步脚本，把目录转成 profile 里的注册声明。
+少这一步，重启后模式列表里什么都不会出现。
+
 ```sh
-mkdir -p ~/.dsh/.agent-presets
 git clone https://github.com/walksls/not-smarter-just-faster.git /tmp/we-need
+mkdir -p ~/.dsh/.agent-presets
 cp -R /tmp/we-need/. ~/.dsh/.agent-presets/we-need/
+
+# 把目录同步成 0.2 认的声明。加 --check 只预览，不加参数才写入。
+node ~/.dsh/.agent-presets/we-need/tools/sync-agent-presets.mjs --check
+node ~/.dsh/.agent-presets/we-need/tools/sync-agent-presets.mjs
 ```
 
+然后完全重启 dsh web，新建空白会话，在模式选择里选「我们需要模式」。
+
+> 为什么必须重启、不能只刷新页面：脚本写的那段配置里有 `agent-preset-registry` 覆盖，
+> 热重载它会让注册表服务被销毁重建，当前所有会话的工具面当场消失
+> （`bash` / `read` / `edit` 全变成 `unknown tool`）。
+>
 > 目录名必须是 `we-need`（`preset.yml` 里的 `name:` 只是显示名）。
 >
-> 注意结尾的 `/.`：如果副本目录已存在，`cp -R <源> <目标>`（不带 `/.`）不会覆盖已有文件，
+> 注意 `cp` 结尾的 `/.`：如果副本目录已存在，`cp -R <源> <目标>`（不带 `/.`）不会覆盖已有文件，
 > 还会造出嵌套目录。已装过的话建议用
 > `rsync -a --delete <源>/ ~/.dsh/.agent-presets/we-need/`。
-
-装完完全重启 dsh web（preset 在启动时扫描），新建空白会话，在模式选择里选「我们需要模式」。
 
 不需要装 npm 包，也不需要改 dsh 源码。
 
@@ -77,6 +91,7 @@ cp -R /tmp/we-need/. ~/.dsh/.agent-presets/we-need/
 | `agent.cordis.yml` | preset 定义（persona + 插件装配） |
 | `preset.yml` | 显示名 / 描述 / 排序 |
 | `lib/*.mjs` | 12 个自带插件 |
+| `tools/sync-agent-presets.mjs` | 把模式目录同步成 dsh 0.2 认的注册声明（装完必跑一次） |
 | `docs/` | 独立实验的原始报告（见下） |
 
 ### docs/：独立实验

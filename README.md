@@ -90,7 +90,7 @@ node ~/.dsh/.agent-presets/we-need/tools/sync-agent-presets.mjs
 | `README-preset.md` | 完整实验日志（20+ 批实验、含被推翻的结论） |
 | `agent.cordis.yml` | preset 定义（persona + 插件装配） |
 | `preset.yml` | 显示名 / 描述 / 排序 |
-| `lib/*.mjs` | 12 个自带插件 |
+| `lib/*.mjs` | 10 个插件 + 2 个内部模块（`delegation.mjs` 全体共用、`detect-v2.mjs` 只给 `thinking-guard`） |
 | `tools/sync-agent-presets.mjs` | 把模式目录同步成 dsh 0.2 认的注册声明（装完必跑一次） |
 | `docs/` | 独立实验的原始报告（见下） |
 
@@ -137,6 +137,27 @@ node ~/.dsh/.agent-presets/we-need/tools/sync-agent-presets.mjs
 | 压缩后重整（`compact-reanchor`） | 长会话风格不崩 |
 | 急停阀（`escape-valve`） | 复读正在生成时当场中止本回合，不等下一步 |
 | 折叠退化块（`thinking-guard`） | 把退化的思考块从模型可见历史里折掉，不让它每轮重放 |
+
+### 防退化两件套：`escape-valve` 与 `thinking-guard`
+
+这两个跟「中文思考」没关系，治的是退化：上下文一长，模型会陷进复读（同一句喷几百遍），
+而且回合看起来还是成功的，不专门检测根本发现不了。你就算不用这个 persona，也可以单独拿去用。
+
+| 插件 | 做什么 | 什么时候动手 |
+|---|---|---|
+| `escape-valve`（急停阀） | 当场中止这一回合 | 复读正在生成时 |
+| `thinking-guard` | 把退化的思考块从模型可见历史里折叠掉，不让它每轮重放 | 下一步开始时 |
+
+两者是上下半截，不是重复：阀管正在喷的那一段，折叠管已经进了历史的那一块。
+它们共用同一个判据 `detect`；`detect-v2.mjs` 是 2026-10-14 加的第二把尺子（英文碎片轮换），
+只给 `thinking-guard` 用，默认不启用。
+
+三者的分工要说清楚，别指望一个顶三个：折叠管不到一次生成内部；压缩管不到刚生成的那一块
+（它落在逐字保留尾里，要下一次压缩才带走）；阀是唯一能当场断的。
+
+本机实跑时这两个改挂到了宿主层，对所有模式生效，因为退化跟模式无关，标准模式一样会复读。
+仓库里的 `agent.cordis.yml` 保留 `enabled: true` 的自包含写法，装在这个模式下就能用；
+想对所有模式生效，把这两条挪到 profile 的宿主层即可。
 
 ### 被自己推翻的（这些也留在文档里）
 
